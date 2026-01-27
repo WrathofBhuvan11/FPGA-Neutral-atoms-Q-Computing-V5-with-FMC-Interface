@@ -7,14 +7,14 @@ module fmc_receiver #(
     input logic i_cam_clk,       
     input logic i_clk_500,       
     input logic i_rst_n,         
-    input logic [23:0] i_cam_data,
+    input logic [63:0] i_cam_data, // Changed from [23:0] to [63:0] (8 pixels)
     input logic i_cam_fval,
     input logic i_cam_lval,
     input logic i_cam_dval,
     
     // pixel outputs
     output logic o_pixel_valid,
-    output logic [7:0] o_pixel_data,
+    output logic [15:0] o_pixel_data, // from [7:0] to [15:0] (2 pixels)
     output logic [COORD_WIDTH-1:0] o_pixel_x,
     output logic [COORD_WIDTH-1:0] o_pixel_y,
 
@@ -26,7 +26,9 @@ module fmc_receiver #(
     output logic o_fifo_full        // FIFO full status (debug)
 );
 
-    localparam FIFO_WIDTH = 27; 
+    // Step A: FIFO Configuration
+    // 64 bits data + 3 bits sync = 67 bits
+    localparam FIFO_WIDTH = 67; 
     localparam FIFO_DEPTH = 1024;
 
     logic [FIFO_WIDTH-1:0] fifo_din, fifo_dout;
@@ -63,18 +65,28 @@ module fmc_receiver #(
     always_ff @(posedge i_cam_clk) begin
         if (!i_rst_n) fifo_wr_en <= 1'b0;
         else begin
+            // Pack sync signals + 64-bit data
             fifo_din <= {i_cam_fval, i_cam_lval, i_cam_dval, i_cam_data};
             fifo_wr_en <= 1'b1; 
         end
     end
 
     // Unpacking Logic
-    logic [2:0] state;
+    // Step C: FSM States
+    typedef enum logic [2:0] {
+        IDLE,
+        OUTPUT_01,
+        OUTPUT_23,
+        OUTPUT_45,
+        OUTPUT_67
+    } state_t;
+
+    state_t state;
    
     // 512x512 max
     logic [COORD_WIDTH-1:0] x, y;
 
-    logic [23:0] current_group;
+    logic [63:0] current_group; // Holds the 8 pixels
     logic fval, lval, dval; 
     logic prev_lval;
     logic prev_fval; // Added to reset Y on frame start
@@ -82,13 +94,14 @@ module fmc_receiver #(
     // Expose synchronized control signals
     assign o_sync_fval = fval;
     assign o_sync_lval = lval;
-    
+   
+    // ROI: win_r0[1]=P0, win_r0[0]=P1. Correct [P0, P1] spatial order.
     always_ff @(posedge i_clk_500) begin
         if (!i_rst_n) begin
-            state          <= 3'd0;
+            state          <= IDLE;
             fifo_rd_en     <= 1'b0;
             o_pixel_valid  <= 1'b0;
-            o_pixel_data   <= 8'd0;
+            o_pixel_data   <= 16'd0;
             x              <= '0;
             y              <= '0;
             prev_lval      <= 1'b0;
@@ -103,14 +116,14 @@ module fmc_receiver #(
             o_frame_done  <= 1'b0;  // Default: no frame done pulse
 
             case (state)
-                3'd0: begin // IDLE
+                IDLE: begin 
                     if (!fifo_empty) begin
-                        // Extract sync signals from FIFO
-                        fval = fifo_dout[26];
-                        lval = fifo_dout[25];
-                        dval = fifo_dout[24];
+                        // Extract sync signals from FIFO (Upper 3 bits of 67)
+                        fval = fifo_dout[66];
+                        lval = fifo_dout[65];
+                        dval = fifo_dout[64];
                         
-                        fifo_rd_en <= 1'b1;
+                        fifo_rd_en <= 1'b1; // Pop the word
 
                         // Rising Edge of FVAL = Reset Frame
                         if (fval && !prev_fval) begin
@@ -132,47 +145,65 @@ module fmc_receiver #(
                         end
                         prev_lval <= lval;
 
+                        // Check for valid data payload
                         if (lval && dval) begin
-                            current_group <= fifo_dout[23:0];
-                            state         <= 3'd2;
+                            current_group <= fifo_dout[63:0]; // Capture 8 pixels
+                            state         <= OUTPUT_01;
                         end else begin
-                            state <= 3'd0;
+                            state <= IDLE;
                         end
                     end
                 end
 
-                3'd2: begin // OUTPUT P0
+                OUTPUT_01: begin // Step B & C: Output Pixels 0 & 1
                     if (x < (H_RES)) begin 
                         o_pixel_valid <= 1'b1;
-                        o_pixel_data  <= current_group[7:0];
+                        o_pixel_data  <= current_group[15:0];
+                        // o_pixel_data <= {current_group[7:0], current_group[15:8]}; 
                         o_pixel_x     <= x;
                         o_pixel_y     <= y;
+                        x             <= x + 2; // Increment by 2
                     end
-                    x     <= x + 1;
-                    state <= 3'd3;
+                    state <= OUTPUT_23;
                 end
 
-                3'd3: begin // OUTPUT P1
+                OUTPUT_23: begin // Output Pixels 2 & 3
                     if (x < (H_RES)) begin
                         o_pixel_valid <= 1'b1;
-                        o_pixel_data  <= current_group[15:8];
+                        o_pixel_data  <= current_group[31:16];
+                        // o_pixel_data <= {current_group[23:16], current_group[31:24]};
                         o_pixel_x     <= x;
                         o_pixel_y     <= y;
+                        x             <= x + 2;
                     end
-                    x     <= x + 1;
-                    state <= 3'd4;
+                    state <= OUTPUT_45;
                 end
 
-                3'd4: begin // OUTPUT P2
+                OUTPUT_45: begin // Output Pixels 4 & 5
                     if (x < (H_RES)) begin
                         o_pixel_valid <= 1'b1;
-                        o_pixel_data  <= current_group[23:16];
+                        o_pixel_data  <= current_group[47:32];
+                        // o_pixel_data <= {current_group[39:32], current_group[47:40]};
                         o_pixel_x     <= x;
                         o_pixel_y     <= y;
+                        x             <= x + 2;
                     end
-                    x     <= x + 1;
-                    state <= 3'd0; 
+                    state <= OUTPUT_67; 
                 end
+
+                OUTPUT_67: begin // Output Pixels 6 & 7
+                    if (x < (H_RES)) begin
+                        o_pixel_valid <= 1'b1;
+                        o_pixel_data  <= current_group[63:48];
+                        // o_pixel_data <= {current_group[55:48], current_group[63:56]};
+                        o_pixel_x     <= x;
+                        o_pixel_y     <= y;
+                        x             <= x + 2;
+                    end
+                    state <= IDLE; // Done with this group
+                end
+
+                default: state <= IDLE;
             endcase
         end
     end

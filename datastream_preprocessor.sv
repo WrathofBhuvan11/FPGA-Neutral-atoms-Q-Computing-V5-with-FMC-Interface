@@ -160,28 +160,30 @@ module datastream_preprocessor (
     // ---------------------------------------------------------------------------
     // 3. SIGNAL EXTRACTION (85 MHz Domain)
     // ---------------------------------------------------------------------------
-    logic [23:0] cam_data;
+    logic [63:0] cam_data;       // Capture all 8 pixels (Lanes 0-7)
     logic cam_fval, cam_lval, cam_dval;
 
     always_ff @(posedge clk_85_buffered) begin
         if (~rst_n_85) begin
             cam_data <= '0; cam_fval <= 0; cam_lval <= 0; cam_dval <= 0;
         end else begin
-            cam_data <= fmc_word[23:0];   // Port A/B/C (24-bit data)
-            cam_dval <= fmc_word[79];     // Control signal
-            cam_fval <= fmc_word[78];     
-            cam_lval <= fmc_word[77];  
-         
+            // Capture 8 pixels (64 bits)
+            cam_data <= fmc_word[63:0];
+            
+            // Extract sync signals (Table 6-6 from FMC Manual)
+            cam_dval <= fmc_word[79];  // from X-link; CameraDVAL (Primary Valid)
+            cam_fval <= fmc_word[78];  // from X-link; FVAL
+            cam_lval <= fmc_word[77];  // from X-link; LVAL
         end
     end
-
+    
 
     // ---------------------------------------------------------------------------
     // 4. FMC RECEIVER (CDC 85 -> 510 MHz + Pixel Logic)
     // ---------------------------------------------------------------------------
     // contains CDC 85 -> 510 MHz + Pixel Logic
     logic        core_pixel_valid;
-    logic [7:0]  core_pixel_data;
+    logic [15:0] core_pixel_data; // carry 2 pixels at once
     logic [8:0]  proc_x, proc_y;
     logic        fmc_sync_lval, fmc_sync_fval;
     logic        fmc_fifo_empty, fmc_fifo_full;
@@ -195,8 +197,8 @@ module datastream_preprocessor (
         .i_cam_fval(cam_fval),
         .i_cam_lval(cam_lval),
         .i_cam_dval(cam_dval),
-        .o_pixel_valid(core_pixel_valid),
-        .o_pixel_data(core_pixel_data),
+        .o_pixel_data(core_pixel_data), // Now 16 bits (2 pixels)
+        .o_pixel_valid(core_pixel_valid), // Valid for PAIR
         // 512x512
         .o_pixel_x(proc_x),
         .o_pixel_y(proc_y),
@@ -213,7 +215,7 @@ module datastream_preprocessor (
     // ---------------------------------------------------------------------------
     logic       match_found;
     logic [6:0] match_idx;
-    logic       match_valid;
+    logic       match_valid, match_offset;
 
     coord_matcher u_match (
         .i_clk(clk_fpga_510),
@@ -227,6 +229,7 @@ module datastream_preprocessor (
         .i_sync_fval(fmc_sync_fval), 
 
         .o_match_found(match_found),
+        .o_match_offset(match_offset),
         .o_qubit_index(match_idx),
         .o_valid_out(match_valid)
     );
@@ -244,7 +247,7 @@ module datastream_preprocessor (
         .i_pixel_data(core_pixel_data),
         .i_pixel_valid(core_pixel_valid),
         .i_match_trigger(match_found),
-
+        .i_match_offset(match_offset),
         // Sync signals from FMC receiver
         .i_sync_lval(fmc_sync_lval), 
         .i_sync_fval(fmc_sync_fval), 
