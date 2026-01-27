@@ -1,5 +1,6 @@
 # FPGA-Neutral-atoms-Q-Computing-V5-with-FMC-Interface
-parameterised v4= v5
+parameterised full mode
+2 pixel system
 
 ```
 3×3 ROI for Qubit with (Qx=100, Qy=100):
