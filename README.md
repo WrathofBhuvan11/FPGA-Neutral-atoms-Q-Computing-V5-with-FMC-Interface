@@ -1,7 +1,7 @@
 # FPGA-Neutral-atoms-Q-Computing-V5-with-FMC-Interface
 parameterised v4= v5
 
-
+```
 3×3 ROI for Qubit with (Qx=100, Qy=100):
 
         X: 99     100     101
@@ -15,3 +15,4 @@ Y: 98 │ (99,98)│(100,98)│(101,98)│  ← Top Row (Qy-2)
                   ↑         ↑
           (Qx,Qy) stored  Trigger
           BOTTOM-CENTER   position
+```
