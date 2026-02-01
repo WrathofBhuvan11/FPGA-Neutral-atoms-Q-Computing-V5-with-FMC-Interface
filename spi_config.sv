@@ -8,7 +8,7 @@
 //   - Synchronous reset for better timing closure @ 500 MHz
 //   - Synthesizable ROM via pure function
 //   - SPI Mode 0 (CPOL=0, CPHA=0) per FMC-200A spec
-//   - Auto-configuration on startup for Base Camera Link mode
+//   - Auto-configuration on startup for Full Camera Link mode
 //-----------------------------------------------------------------
 
 module spi_config (
@@ -45,18 +45,17 @@ module spi_config (
     state_t state, state_next;
 
     //-----------------------------------------------------------------
-    // SYNTHESIZABLE ROM: FMC-200A BASE MODE CONFIGURATION
+    // SYNTHESIZABLE ROM: FMC-200A Full MODE CONFIGURATION
     //-----------------------------------------------------------------
-    // Configuration Sequence for Base Mode:
-    //   1. Mode Configuration (0x00): Base mode, cameras out of reset
-    //   2. Camera A Setup (0x15): 8-bit pixels, 3 channels (24-bit total)
+    // Configuration Sequence for Full Mode:
+    //   1. Mode Configuration (0x07): Full mode, cameras out of reset
+    //   2. Camera A Setup (0x15): 8-bit pixels, more than - full mode - 3 channels (24-bit total) #TODO
     //   3. X Bit Slip (0x06): Default alignment value
     //   4. Camera A Control (0x09): CC pins to GPIO mode
-    
     function automatic logic [15:0] get_fmc_config(input int idx);
         case (idx)
-            0: return 16'h0003;  // Addr 0x00: Base mode, cameras active
-            1: return 16'h1530;  // Addr 0x15: 8-bit, 3 channels
+            0: return 16'h0007;  // Full mode (Bit 2=1 selects Full) 
+            // default setting full mode -1: return 16'h1530;  // Addr 0x15: 8-bit, 3 channels
             2: return 16'h0605;  // Addr 0x06: X bit slip = 5
             3: return 16'h0900;  // Addr 0x09: CC to GPIO
             default: return 16'h0000;

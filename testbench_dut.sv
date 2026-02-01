@@ -47,7 +47,7 @@ module tb_dynamic_video_system;
 
     logic        lane_valid;
     logic [COORD_WIDTH-1:0]     core_x_probe, core_y_probe;
-    logic [7:0]  core_pixel_probe;      // For RX checker
+    logic [15:0]  core_pixel_probe;      // For RX checker
     logic        core_pixel_valid_probe; // For RX checker
     
     // Driver Signals
@@ -270,23 +270,26 @@ module tb_dynamic_video_system;
     assign core_pixel_valid_probe = DUT.core_pixel_valid;
 
     // ---------------------------------------------------------------------------
-    // 9. FMC Protocol Task (Base Mode 8-bit Monochromatic)
+    // 9. FMC Protocol Task (FULL Mode 8-bit Monochromatic)
     // ---------------------------------------------------------------------------
     task send_fmc_cycle(
-        input logic dval,        // Data valid
-        input logic fval,        // Frame valid
-        input logic lval,        // Line valid  
-        input logic [23:0] rgb_data  // 3 pixels (P2, P1, P0)
+    input logic dval,  // Data valid
+    input logic fval,  // Frame valid
+    input logic lval,  // Line valid  
+    input logic [63:0] pixel_data  // 8 pixels for Full Mode
     );
         @(posedge i_cam_clk);
-        // Slight delay to mimic Tco
         #0.1; 
         sim_fmc_word = 88'd0;
-        sim_fmc_word[23:0] = rgb_data;   // Lanes 0-2: Pixel data
-        sim_fmc_word[79] = dval;         // Lane 9 bit 7: DVAL
-        sim_fmc_word[78] = fval;         // Lane 9 bit 6: FVAL
-        sim_fmc_word[77] = lval;         // Lane 9 bit 5: LVAL
-        sim_fmc_word[76] = 1'b0;         // Lane 9 bit 4: Spare
+        
+        // Full Mode: 8 pixels across lanes 0-7
+        sim_fmc_word[63:0] = pixel_data;  // P7..P0
+        
+        // Sync signals (Table 6-6)
+        sim_fmc_word[79] = dval;  // CameraDVAL
+        sim_fmc_word[78] = fval;  // FVAL
+        sim_fmc_word[77] = lval;  // LVAL
+        sim_fmc_word[76] = 1'b0;  // FMC DVAL (spare)
     endtask
 
     // ---------------------------------------------------------------------------
@@ -403,37 +406,45 @@ module tb_dynamic_video_system;
             
             // Frame preamble (FVAL assertion)
             frame_fval_start = $realtime;
-            repeat(10) send_fmc_cycle(.dval(0), .fval(1), .lval(0), .rgb_data(0));
+            repeat(10) send_fmc_cycle(.dval(0), .fval(1), .lval(0), .pixel_data(0));
             
             // First pixel about to be sent
             frame_first_pixel = $realtime;
 
-            // Generate IMAGE_HEIGHT 512 lines
+            // Generate IMAGE_HEIGHT lines
             for (int y = 0; y < IMAGE_HEIGHT; y++) begin
-                for (int g = 0; g < (IMAGE_WIDTH+2)/3; g++) begin
-                    int x_base = g * 3;
-                    logic [7:0] p0, p1, p2;
-
+                // Full Mode: Send IMAGE_WIDTH/8 cycles (8 pixels per cycle)
+                for (int g = 0; g < (IMAGE_WIDTH/8); g++) begin
+                    int x_base = g * 8;
+                    logic [7:0] p0, p1, p2, p3, p4, p5, p6, p7;
+            
+                    // Generate 8 pixels per cycle
                     p0 = 8'((x_base + 0) ^ y) + 8'(f);
                     p1 = 8'((x_base + 1) ^ y) + 8'(f);
                     p2 = 8'((x_base + 2) ^ y) + 8'(f);
-
-                    send_fmc_cycle(.dval(1), .fval(1), .lval(1), .rgb_data({p2, p1, p0}));
-                end
-
-                // H-Blank
-                repeat(5) send_fmc_cycle(.dval(0), .fval(1), .lval(0), .rgb_data(0));
-            end
+                    p3 = 8'((x_base + 3) ^ y) + 8'(f);
+                    p4 = 8'((x_base + 4) ^ y) + 8'(f);
+                    p5 = 8'((x_base + 5) ^ y) + 8'(f);
+                    p6 = 8'((x_base + 6) ^ y) + 8'(f);
+                    p7 = 8'((x_base + 7) ^ y) + 8'(f);
             
+                    // Send 8 pixels in one cycle
+                    send_fmc_cycle(.dval(1), .fval(1), .lval(1), .pixel_data({p7, p6, p5, p4, p3, p2, p1, p0}));
+                end
+            
+                // H-Blank
+                repeat(5) send_fmc_cycle(.dval(0), .fval(1), .lval(0), .pixel_data(0));
+            end
+
             // Last pixel sent
             frame_last_pixel = $realtime;
             
             // Frame Valid goes LOW
-            send_fmc_cycle(.dval(0), .fval(0), .lval(0), .rgb_data(0));
+            send_fmc_cycle(.dval(0), .fval(0), .lval(0), .pixel_data(0));
             $display("|| Frame %0d transmission complete", f);
             
             // Inter-Frame Delay
-            repeat(500) send_fmc_cycle(.dval(0), .fval(0), .lval(0), .rgb_data(0));
+            repeat(500) send_fmc_cycle(.dval(0), .fval(0), .lval(0), .pixel_data(0));
         end
         
         // Wait for processing to drain
@@ -545,7 +556,7 @@ module tb_dynamic_video_system;
                 int id = o_qubit_base_id + k;
                 expected_state[k] = get_expected_decision(id, check_frame);
             end
-            
+           
             if (o_qubit_state !== expected_state) begin
                 gaussian_error_cnt++;
                 $display("\n||================================================||");
@@ -577,7 +588,7 @@ module tb_dynamic_video_system;
             end
         end
     end
-
+    
     // ---------------------------------------------------------------------------
     // 16. Comprehensive Performance Monitor
     // ---------------------------------------------------------------------------
@@ -605,15 +616,15 @@ module tb_dynamic_video_system;
                 proc_throughput = frame_last_result - frame_first_result;
                 end_to_end = frame_last_result - frame_first_pixel;
                 
-                $display("  |-------------------------------------------------------------|");
-                $display("  | DETAILED TIMING: Frame %0d                                  |", check_frame);
-                $display("  |-------------------------------------------------------------|");
+                $display("  |---------------------------------------------------------|");
+                $display("  | DETAILED TIMING: Frame %0d                              |", check_frame);
+                $display("  |---------------------------------------------------------|");
                 $display("  | Input Stream Duration:    %8.2f µs                      |", input_duration / 1000.0);
-                $display("  | Storage Latency:          %8.2f µs (FIFO + Extraction) |", storage_latency / 1000.0);
-                $display("  | Pipeline Latency:         %8.2f µs (First Result)      |", proc_pipeline_latency / 1000.0);
+                $display("  | Storage Latency:          %8.2f µs (FIFO + Extraction)  |", storage_latency / 1000.0);
+                $display("  | Pipeline Latency:         %8.2f µs (First Result)       |", proc_pipeline_latency / 1000.0);
                 $display("  | Processing Throughput:    %8.2f µs (%0d qubits)         |", proc_throughput / 1000.0, NUM_QUBITS);
                 $display("  | Total End-to-End:         %8.2f µs                      |", end_to_end / 1000.0);
-                $display("  |-------------------------------------------------------------|");
+                $display("  |---------------------------------------------------- ----|");
             end
         end
     end
