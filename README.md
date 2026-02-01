@@ -26,11 +26,11 @@ Example: Qubit #5 at center (120, 100)
 
      X: 119   120   121        ← Column coordinates
         ┌─────┬─────┬─────┐
-Y: 98  │ TL  │ TC  │ TR  │    ← Top Row (Y-2)
+ Y: 98  │ TL  │ TC  │ TR  │    ← Top Row (Y-2)
         ├─────┼─────┼─────┤
-Y: 99  │ ML  │ MC  │ MR  │    ← Middle Row (Y-1)
+ Y: 99  │ ML  │ MC  │ MR  │    ← Middle Row (Y-1)
         ├─────┼─────┼─────┤
-Y: 100 │ BL  │ BC  │ BR  │    ← Bottom Row (Y = Qubit Y)
+ Y: 100 │ BL  │ BC  │ BR  │    ← Bottom Row (Y = Qubit Y)
         └─────┴─────┴─────┘
                ↑
           Qubit Center
